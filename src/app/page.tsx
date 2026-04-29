@@ -409,7 +409,7 @@ export default function PixelEditor() {
       >
         {!currentImage && (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-zinc-500 z-10 pointer-events-none">
-            <h2 className="text-5xl font-bold mb-2">PixelLab</h2>
+            <h2 className="text-5xl font-bold mb-2">SpriteLab</h2>
             <img src="./favicon.png" alt="Welcome" className="w-64 h-64" />
           </div>
         )}

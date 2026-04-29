@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://placeholder-url.vercel.app'),
+  metadataBase: new URL('https://spritelab.adilhusain.xyz'),
   title: "SpriteLab",
   description: "A fast, web-based pixel art editor. Draw, crop, and auto-process sprites directly in your browser.",
   applicationName: "SpriteLab",
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "SpriteLab - Pixel Art Editor",
     description: "A fast, web-based pixel art editor. Draw, crop, and auto-process sprites directly in your browser.",
-    url: "https://placeholder-url.vercel.app",
+    url: "https://spritelab.adilhusain.xyz/",
     siteName: "SpriteLab",
     images: [
       {
