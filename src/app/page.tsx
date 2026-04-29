@@ -60,7 +60,7 @@ export default function PixelEditor() {
     const img = new Image();
     img.onload = () => {
       const { imageWidth, imageHeight, currentScale } = useEditorStore.getState();
-      
+
       // If the canvas size changed in the history (e.g., after crop or auto process), restore it
       if (img.width !== imageWidth || img.height !== imageHeight) {
         setImageState(img.width, img.height);
@@ -175,9 +175,9 @@ export default function PixelEditor() {
       for (let j = 0; j < corners.length; j++) {
         const c1 = corners[i], c2 = corners[j];
         if (Math.abs(data[c1] - data[c2]) <= 15 &&
-            Math.abs(data[c1 + 1] - data[c2 + 1]) <= 15 &&
-            Math.abs(data[c1 + 2] - data[c2 + 2]) <= 15 &&
-            Math.abs(data[c1 + 3] - data[c2 + 3]) <= 15) {
+          Math.abs(data[c1 + 1] - data[c2 + 1]) <= 15 &&
+          Math.abs(data[c1 + 2] - data[c2 + 2]) <= 15 &&
+          Math.abs(data[c1 + 3] - data[c2 + 3]) <= 15) {
           matches++;
         }
       }
@@ -198,8 +198,8 @@ export default function PixelEditor() {
       if (bgA < 10) return false;
       // Otherwise, match the dynamic background color within tolerance
       return Math.abs(data[i] - bgR) <= tolerance &&
-             Math.abs(data[i + 1] - bgG) <= tolerance &&
-             Math.abs(data[i + 2] - bgB) <= tolerance;
+        Math.abs(data[i + 1] - bgG) <= tolerance &&
+        Math.abs(data[i + 2] - bgB) <= tolerance;
     };
 
     const queue: [number, number][] = [];
@@ -409,8 +409,8 @@ export default function PixelEditor() {
       >
         {!currentImage && (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-zinc-500 z-10 pointer-events-none">
-            <h2 className="text-2xl font-bold mb-2">Welcome to PixelLab</h2>
-            <p>Upload an image from the toolbar to get started.</p>
+            <h2 className="text-5xl font-bold mb-2">PixelLab</h2>
+            <img src="./favicon.png" alt="Welcome" className="w-64 h-64" />
           </div>
         )}
 
