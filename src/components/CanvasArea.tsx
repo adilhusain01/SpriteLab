@@ -63,7 +63,7 @@ export function CanvasArea({
 
   // Expose crop data to parent implicitly via refs if needed, but handled locally
   useEffect(() => {
-    if (onApplyCrop && cropRect) {
+    if (cropRect) {
       // Actually, crop application modifies the canvas directly, which is handled in parent
       // but we need to pass the cropRect out.
       // Let's store crop rect globally? Or keep it here and parent uses a ref.
