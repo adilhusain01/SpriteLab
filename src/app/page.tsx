@@ -1,444 +1,245 @@
 "use client";
-import React, { useRef, useState, useEffect } from 'react';
-import { Toolbar } from '@/components/Toolbar';
-import { CanvasArea } from '@/components/CanvasArea';
-import { useEditorStore } from '@/store/useEditorStore';
+import React, { useEffect, useRef } from 'react';
+import Link from 'next/link';
+import { Palette, Gamepad2, ArrowRight, Sparkles } from 'lucide-react';
 
-export default function PixelEditor() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const uiCanvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+const vertexShaderSource = `
+  attribute vec2 position;
+  varying vec2 vUv;
+  void main() {
+    vUv = position;
+    gl_Position = vec4(position, 0.0, 1.0);
+  }
+`;
 
-  const [currentImage, setCurrentImage] = useState<HTMLImageElement | null>(null);
-  const [cropControlsVisible, setCropControlsVisible] = useState(false);
-  const [history, setHistory] = useState<string[]>([]);
+const fragmentShaderSource = `
+  precision mediump float;
+  varying vec2 vUv;
+  uniform float u_time;
+  uniform vec2 u_resolution;
 
-  const {
-    setMode, setImageState, setPan, setZoom, currentScale, brushColor,
-    historyStep, updateHistory
-  } = useEditorStore();
+  float hash(float n) { return fract(sin(n) * 1e4); }
+  float hash(vec2 p) { return fract(1e4 * sin(17.0 * p.x + p.y * 0.1) * (0.1 + abs(sin(p.y * 13.0 + p.x)))); }
 
-  const centerCanvas = (imgW: number, imgH: number, scale: number) => {
-    if (!containerRef.current) return;
-    const w = containerRef.current.clientWidth;
-    const h = containerRef.current.clientHeight;
-    const newPanX = (w - imgW * scale) / 2;
-    const newPanY = (h - imgH * scale) / 2;
-    setPan(newPanX, newPanY);
-  };
+  float noise(vec3 x) {
+    const vec3 step = vec3(110.0, 241.0, 171.0);
+    vec3 i = floor(x);
+    vec3 f = fract(x);
+    float n = dot(i, step);
+    vec3 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(mix( hash(n + dot(step, vec3(0.0, 0.0, 0.0))), hash(n + dot(step, vec3(1.0, 0.0, 0.0))), u.x),
+                   mix( hash(n + dot(step, vec3(0.0, 1.0, 0.0))), hash(n + dot(step, vec3(1.0, 1.0, 0.0))), u.x), u.y),
+               mix(mix( hash(n + dot(step, vec3(0.0, 0.0, 1.0))), hash(n + dot(step, vec3(1.0, 0.0, 1.0))), u.x),
+                   mix( hash(n + dot(step, vec3(0.0, 1.0, 1.0))), hash(n + dot(step, vec3(1.0, 1.0, 1.0))), u.x), u.y), u.z);
+  }
 
-  const handleZoom = (amount: number) => {
-    if (!containerRef.current) return;
-    const prevScale = useEditorStore.getState().currentScale;
-    const newScale = Math.max(0.5, prevScale + amount);
+  float map(vec3 p) {
+    float d = length(p) - 1.2;
+    d += noise(p * 2.0 + u_time * 0.8) * 0.4;
+    d += noise(p * 3.0 - u_time * 0.5) * 0.2;
+    return d;
+  }
 
-    const { panX, panY } = useEditorStore.getState();
-    const centerX = containerRef.current.clientWidth / 2;
-    const centerY = containerRef.current.clientHeight / 2;
+  vec3 calcNormal(vec3 p) {
+    vec2 e = vec2(0.01, 0.0);
+    return normalize(vec3(
+      map(p + e.xyy) - map(p - e.xyy),
+      map(p + e.yxy) - map(p - e.yxy),
+      map(p + e.yyx) - map(p - e.yyx)
+    ));
+  }
 
-    const canvasX = (centerX - panX) / prevScale;
-    const canvasY = (centerY - panY) / prevScale;
+  void main() {
+    vec2 uv = vUv;
+    uv.x *= u_resolution.x / u_resolution.y;
 
-    const newPanX = centerX - canvasX * newScale;
-    const newPanY = centerY - canvasY * newScale;
+    vec3 ro = vec3(0.0, 0.0, 3.5);
+    vec3 rd = normalize(vec3(uv, -1.0));
 
-    setPan(newPanX, newPanY);
-    setZoom(newScale);
-  };
+    float t = 0.0;
+    float max_t = 10.0;
+    vec3 p;
+    for(int i = 0; i < 40; i++) {
+      p = ro + rd * t;
+      float d = map(p);
+      if(d < 0.01 || t > max_t) break;
+      t += d;
+    }
 
-  const saveState = () => {
-    if (!canvasRef.current) return;
-    const dataUrl = canvasRef.current.toDataURL('image/png');
-    const newHistory = history.slice(0, historyStep + 1);
-    newHistory.push(dataUrl);
-    setHistory(newHistory);
-    updateHistory(newHistory.length - 1, newHistory.length);
-  };
+    vec3 col = vec3(0.0);
+    if(t < max_t) {
+      vec3 n = calcNormal(p);
+      vec3 light = normalize(vec3(1.0, 1.0, 1.0));
+      float dif = max(dot(n, light), 0.0);
+      float amb = 0.2;
+      
+      vec3 viewDir = normalize(ro - p);
+      vec3 reflectDir = reflect(-light, n);
+      float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32.0);
 
-  const loadState = (step: number) => {
-    if (step < 0 || step >= history.length || !canvasRef.current) return;
-    const img = new Image();
-    img.onload = () => {
-      const { imageWidth, imageHeight, currentScale } = useEditorStore.getState();
+      float brightness = dif + amb + spec * 0.8;
+      col = vec3(brightness);
+    }
 
-      // If the canvas size changed in the history (e.g., after crop or auto process), restore it
-      if (img.width !== imageWidth || img.height !== imageHeight) {
-        setImageState(img.width, img.height);
-        setTimeout(() => {
-          const ctx = canvasRef.current?.getContext('2d');
-          if (ctx && canvasRef.current) {
-            ctx.clearRect(0, 0, img.width, img.height);
-            ctx.drawImage(img, 0, 0);
-            centerCanvas(img.width, img.height, currentScale);
-          }
-        }, 50);
-      } else {
-        const ctx = canvasRef.current?.getContext('2d');
-        if (ctx && canvasRef.current) {
-          ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-          ctx.drawImage(img, 0, 0);
-        }
-      }
-    };
-    img.src = history[step];
-    updateHistory(step, history.length);
-  };
+    float vignette = smoothstep(1.5, 0.5, length(uv));
+    col *= vignette;
+
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+function createShader(gl: WebGLRenderingContext, type: number, source: string) {
+  const shader = gl.createShader(type);
+  if (!shader) return null;
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    console.error(gl.getShaderInfoLog(shader));
+    gl.deleteShader(shader);
+    return null;
+  }
+  return shader;
+}
+
+const ASCIIBlob = () => {
+  const preRef = useRef<HTMLPreElement>(null);
 
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
-        e.preventDefault();
-        loadState(useEditorStore.getState().historyStep - 1);
-      } else if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) {
-        e.preventDefault();
-        loadState(useEditorStore.getState().historyStep + 1);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [history]); // Depend on history so loadState gets the latest closures
+    const canvas = document.createElement('canvas');
+    const cols = 90;
+    const rows = 45;
+    canvas.width = cols;
+    canvas.height = rows;
 
-  const handleUpload = (file: File) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        if (!canvasRef.current || !uiCanvasRef.current) return;
-        setImageState(img.width, img.height);
-        setCurrentImage(img);
-        const scale = img.width < 100 ? 5 : 1;
-        setZoom(scale);
+    const gl = canvas.getContext('webgl', { preserveDrawingBuffer: true });
+    if (!gl) return;
 
-        // Wait for React to mount the new canvas size before drawing
-        setTimeout(() => {
-          const ctx = canvasRef.current?.getContext('2d');
-          ctx?.clearRect(0, 0, img.width, img.height);
-          ctx?.drawImage(img, 0, 0);
-          centerCanvas(img.width, img.height, scale);
+    const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+    const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+    if (!vertexShader || !fragmentShader) return;
 
-          setHistory([]);
-          updateHistory(-1, 0);
-          saveState();
-        }, 50);
+    const program = gl.createProgram();
+    if (!program) return;
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
 
-        setMode('erase');
-      };
-      img.src = e.target?.result as string;
-    };
-    reader.readAsDataURL(file);
-  };
+    gl.useProgram(program);
 
-  const handleDownload = (scale: number) => {
-    if (!currentImage || !canvasRef.current) {
-      alert("Please upload an image first!");
-      return;
-    }
-    const expCanvas = document.createElement('canvas');
-    expCanvas.width = canvasRef.current.width * scale;
-    expCanvas.height = canvasRef.current.height * scale;
-    const expCtx = expCanvas.getContext('2d');
-    if (!expCtx) return;
+    const positionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+      -1.0, -1.0, 1.0, -1.0, -1.0, 1.0,
+      -1.0, 1.0, 1.0, -1.0, 1.0, 1.0
+    ]), gl.STATIC_DRAW);
 
-    expCtx.imageSmoothingEnabled = false;
-    expCtx.drawImage(canvasRef.current, 0, 0, expCanvas.width, expCanvas.height);
+    const positionLocation = gl.getAttribLocation(program, 'position');
+    gl.enableVertexAttribArray(positionLocation);
+    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
 
-    const link = document.createElement('a');
-    link.download = 'icon_exported.png';
-    link.href = expCanvas.toDataURL('image/png');
-    link.click();
-  };
+    const timeLocation = gl.getUniformLocation(program, 'u_time');
+    const resolutionLocation = gl.getUniformLocation(program, 'u_resolution');
 
-  const handleAutoProcess = () => {
-    if (!currentImage || !canvasRef.current) return;
+    gl.uniform2f(resolutionLocation, cols * 0.5, rows);
 
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    let animationFrameId: number;
+    const startTime = performance.now();
+    const pixels = new Uint8Array(cols * rows * 4);
 
-    const w = canvas.width;
-    const h = canvas.height;
-    const imgData = ctx.getImageData(0, 0, w, h);
-    const data = imgData.data;
+    const chars = ' .:-=+*#%@';
 
-    const corners = [
-      0, // top-left
-      (w - 1) * 4, // top-right
-      ((h - 1) * w) * 4, // bottom-left
-      ((h - 1) * w + w - 1) * 4 // bottom-right
-    ];
+    const render = () => {
+      const time = (performance.now() - startTime) * 0.001;
+      gl.uniform1f(timeLocation, time);
 
-    let bgR = data[0], bgG = data[1], bgB = data[2], bgA = data[3];
-    let maxMatches = 0;
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      gl.readPixels(0, 0, cols, rows, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
 
-    for (let i = 0; i < corners.length; i++) {
-      let matches = 0;
-      for (let j = 0; j < corners.length; j++) {
-        const c1 = corners[i], c2 = corners[j];
-        if (Math.abs(data[c1] - data[c2]) <= 15 &&
-          Math.abs(data[c1 + 1] - data[c2 + 1]) <= 15 &&
-          Math.abs(data[c1 + 2] - data[c2 + 2]) <= 15 &&
-          Math.abs(data[c1 + 3] - data[c2 + 3]) <= 15) {
-          matches++;
+      let text = '';
+      for (let y = rows - 1; y >= 0; y--) {
+        for (let x = 0; x < cols; x++) {
+          const i = (y * cols + x) * 4;
+          const brightness = pixels[i] / 255;
+          const charIdx = Math.min(Math.floor(brightness * chars.length), chars.length - 1);
+          text += chars[charIdx];
         }
+        text += '\n';
       }
-      if (matches > maxMatches) {
-        maxMatches = matches;
-        bgR = data[corners[i]];
-        bgG = data[corners[i] + 1];
-        bgB = data[corners[i] + 2];
-        bgA = data[corners[i] + 3];
-      }
-    }
 
-    const tolerance = 15;
-    const isBg = (i: number) => {
-      // Always treat fully transparent pixels as background so flood-fill can pass through them
-      if (data[i + 3] < 10) return true;
-      // If the detected background was transparent, we only clear transparent
-      if (bgA < 10) return false;
-      // Otherwise, match the dynamic background color within tolerance
-      return Math.abs(data[i] - bgR) <= tolerance &&
-        Math.abs(data[i + 1] - bgG) <= tolerance &&
-        Math.abs(data[i + 2] - bgB) <= tolerance;
+      if (preRef.current) {
+        preRef.current.textContent = text;
+      }
+
+      animationFrameId = requestAnimationFrame(render);
     };
 
-    const queue: [number, number][] = [];
-    for (let x = 0; x < w; x++) {
-      if (isBg((x) * 4)) queue.push([x, 0]);
-      if (isBg(((h - 1) * w + x) * 4)) queue.push([x, h - 1]);
-    }
-    for (let y = 0; y < h; y++) {
-      if (isBg((y * w) * 4)) queue.push([0, y]);
-      if (isBg((y * w + w - 1) * 4)) queue.push([w - 1, y]);
-    }
+    render();
 
-    const visited = new Set<number>();
-    while (queue.length > 0) {
-      const [x, y] = queue.shift()!;
-      const idx = y * w + x;
-      if (visited.has(idx)) continue;
-      visited.add(idx);
-
-      const dataIdx = idx * 4;
-      data[dataIdx + 3] = 0;
-
-      const neighbors = [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]];
-      for (const [nx, ny] of neighbors) {
-        if (nx >= 0 && nx < w && ny >= 0 && ny < h) {
-          const nIdx = ny * w + nx;
-          if (!visited.has(nIdx) && isBg((ny * w + nx) * 4)) {
-            queue.push([nx, ny]);
-          }
-        }
-      }
-    }
-
-    let minX = w, minY = h, maxX = 0, maxY = 0;
-    let hasPixels = false;
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        if (data[(y * w + x) * 4 + 3] > 0) {
-          hasPixels = true;
-          minX = Math.min(minX, x);
-          minY = Math.min(minY, y);
-          maxX = Math.max(maxX, x);
-          maxY = Math.max(maxY, y);
-        }
-      }
-    }
-
-    if (!hasPixels) {
-      ctx.putImageData(imgData, 0, 0);
-      saveState();
-      return;
-    }
-
-    const cw = maxX - minX + 1;
-    const ch = maxY - minY + 1;
-
-    const cropCanvas = document.createElement('canvas');
-    cropCanvas.width = cw;
-    cropCanvas.height = ch;
-    const cropCtx = cropCanvas.getContext('2d');
-    cropCtx?.putImageData(imgData, -minX, -minY);
-
-    setImageState(cw, ch);
-    // Needs a timeout for React state to update the DOM canvas elements before drawing
-    setTimeout(() => {
-      const newCtx = canvasRef.current?.getContext('2d');
-      newCtx?.drawImage(cropCanvas, 0, 0);
-      centerCanvas(cw, ch, currentScale);
-      saveState();
-    }, 50);
-  };
-
-  const handleApplyCrop = () => {
-    const rect = (canvasRef.current as any)?.cropRect;
-    if (!rect || !canvasRef.current) return;
-
-    const minX = Math.floor(rect.x);
-    const minY = Math.floor(rect.y);
-    const cw = Math.floor(rect.w);
-    const ch = Math.floor(rect.h);
-
-    if (cw <= 0 || ch <= 0) return;
-
-    const ctx = canvasRef.current.getContext('2d');
-    const imgData = ctx?.getImageData(minX, minY, cw, ch);
-
-    setImageState(cw, ch);
-    setTimeout(() => {
-      const newCtx = canvasRef.current?.getContext('2d');
-      if (newCtx && imgData) newCtx.putImageData(imgData, 0, 0);
-      centerCanvas(cw, ch, currentScale);
-      saveState();
-      setCropControlsVisible(false);
-      (canvasRef.current as any).setCropRect(null);
-    }, 50);
-  };
-
-  const handleOutline = () => {
-    if (!currentImage || !canvasRef.current) return;
-    const w = canvasRef.current.width;
-    const h = canvasRef.current.height;
-    const ctx = canvasRef.current.getContext('2d');
-    if (!ctx) return;
-
-    const imgData = ctx.getImageData(0, 0, w, h);
-    const data = imgData.data;
-    const r = parseInt(brushColor.substring(1, 3), 16);
-    const g = parseInt(brushColor.substring(3, 5), 16);
-    const b = parseInt(brushColor.substring(5, 7), 16);
-
-    const newW = w + 2;
-    const newH = h + 2;
-    const newCanvas = document.createElement('canvas');
-    newCanvas.width = newW;
-    newCanvas.height = newH;
-    const newCtx = newCanvas.getContext('2d')!;
-    newCtx.drawImage(canvasRef.current, 1, 1);
-
-    const newImgData = newCtx.getImageData(0, 0, newW, newH);
-    const newData = newImgData.data;
-    const refData = new Uint8ClampedArray(newData);
-    let modified = false;
-
-    for (let y = 0; y < newH; y++) {
-      for (let x = 0; x < newW; x++) {
-        const i = (y * newW + x) * 4;
-        if (refData[i + 3] === 0) {
-          let hasSolidNeighbor = false;
-          const neighbors = [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1], [x + 1, y + 1], [x - 1, y - 1], [x + 1, y - 1], [x - 1, y + 1]];
-          for (const [nx, ny] of neighbors) {
-            if (nx >= 0 && nx < newW && ny >= 0 && ny < newH) {
-              if (refData[(ny * newW + nx) * 4 + 3] > 0) {
-                hasSolidNeighbor = true;
-                break;
-              }
-            }
-          }
-          if (hasSolidNeighbor) {
-            newData[i] = r;
-            newData[i + 1] = g;
-            newData[i + 2] = b;
-            newData[i + 3] = 255;
-            modified = true;
-          }
-        }
-      }
-    }
-    if (modified) {
-      setImageState(newW, newH);
-      setTimeout(() => {
-        const nextCtx = canvasRef.current?.getContext('2d');
-        if (nextCtx) nextCtx.putImageData(newImgData, 0, 0);
-        centerCanvas(newW, newH, currentScale);
-        saveState();
-      }, 50);
-    }
-  };
-
-  const handleDropShadow = () => {
-    if (!currentImage || !canvasRef.current) return;
-    const shift = 2;
-    const newW = canvasRef.current.width + shift;
-    const newH = canvasRef.current.height + shift;
-
-    const newCanvas = document.createElement('canvas');
-    newCanvas.width = newW;
-    newCanvas.height = newH;
-    const newCtx = newCanvas.getContext('2d')!;
-
-    newCtx.drawImage(canvasRef.current, shift, shift);
-    newCtx.globalCompositeOperation = 'source-in';
-    newCtx.fillStyle = brushColor;
-    newCtx.fillRect(0, 0, newW, newH);
-
-    newCtx.globalCompositeOperation = 'source-over';
-    newCtx.drawImage(canvasRef.current, 0, 0);
-
-    setImageState(newW, newH);
-    setTimeout(() => {
-      const nextCtx = canvasRef.current?.getContext('2d');
-      if (nextCtx) nextCtx.drawImage(newCanvas, 0, 0);
-      centerCanvas(newW, newH, currentScale);
-      saveState();
-    }, 50);
-  };
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+      gl.deleteProgram(program);
+    };
+  }, []);
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-zinc-950 text-zinc-100 overflow-hidden font-sans selection:bg-indigo-500/30">
-      <Toolbar
-        onUpload={handleUpload}
-        onDownload={handleDownload}
-        onUndo={() => loadState(historyStep - 1)}
-        onRedo={() => loadState(historyStep + 1)}
-        onAutoProcess={handleAutoProcess}
-        onOutline={handleOutline}
-        onDropShadow={handleDropShadow}
-      />
+    <pre
+      ref={preRef}
+      className="text-[8px] md:text-[10px] lg:text-[12px] leading-[1] font-mono text-indigo-500/60 font-bold select-none overflow-hidden"
+      style={{ letterSpacing: '0.1em' }}
+    />
+  );
+};
 
-      <div
-        className="flex-1 relative flex"
-        ref={containerRef}
-        onWheel={(e) => {
-          if (!currentImage) return;
-          const amount = e.deltaY > 0 ? -0.5 : 0.5;
-          handleZoom(amount);
-        }}
-      >
-        {!currentImage && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center text-zinc-500 z-10 pointer-events-none">
-            <h2 className="text-5xl font-bold mb-2">SpriteLab</h2>
-            <img src="./favicon.png" alt="Welcome" className="w-64 h-64" />
-          </div>
-        )}
+export default function LandingPage() {
+  return (
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col items-center justify-center relative overflow-hidden font-sans selection:bg-indigo-500/30">
 
-        <CanvasArea
-          canvasRef={canvasRef}
-          uiCanvasRef={uiCanvasRef}
-          currentImage={currentImage}
-          onStateSave={saveState}
-          cropControlsVisible={cropControlsVisible}
-          setCropControlsVisible={setCropControlsVisible}
-          onApplyCrop={handleApplyCrop}
-          onCancelCrop={() => {
-            (canvasRef.current as any)?.setCropRect(null);
-            setCropControlsVisible(false);
-          }}
-        />
+      {/* ASCII Background Blob */}
+      <div className="absolute inset-0 flex items-center justify-center opacity-40 mix-blend-screen pointer-events-none z-0">
+        <ASCIIBlob />
+      </div>
 
-        {currentImage && (
-          <div className="absolute bottom-4 left-4 bg-zinc-800/90 backdrop-blur-sm p-2 rounded-lg border border-zinc-700 shadow-xl flex gap-2">
-            <button onClick={() => handleZoom(-0.5)} className="p-1 hover:bg-zinc-700 rounded transition-colors" title="Zoom Out">-</button>
-            <div className="px-2 font-mono text-sm flex items-center justify-center min-w-16">
-              {Math.round(currentScale * 100)}%
+      {/* Content */}
+      <div className="relative z-10 max-w-4xl w-full px-6 flex flex-col items-center text-center mt-[-5vh]">
+
+        <h1 className="text-6xl md:text-8xl font-black tracking-tighter mb-6 bg-gradient-to-br from-zinc-100 via-zinc-300 to-zinc-600 bg-clip-text text-transparent">
+          SpriteLab
+        </h1>
+
+        <p className="text-xl md:text-2xl text-zinc-400 max-w-2xl mb-12 leading-relaxed">
+          The ultimate pixel-art toolset. Create, edit, and convert your images into stunning retro sprites right in your browser.
+        </p>
+
+        <div className="flex flex-col sm:flex-row gap-6 w-full max-w-2xl justify-center">
+          {/* Card 1: Main Editor */}
+          <Link href="/editor" className="group flex-1 bg-zinc-900/80 backdrop-blur-sm border border-zinc-800 hover:border-indigo-500/50 p-6 rounded-2xl transition-all duration-300 hover:shadow-2xl hover:shadow-indigo-500/10 text-left hover:-translate-y-1">
+            <div className="w-12 h-12 bg-indigo-500/20 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300">
+              <Palette className="text-indigo-400" size={24} />
             </div>
-            <button onClick={() => handleZoom(0.5)} className="p-1 hover:bg-zinc-700 rounded transition-colors" title="Zoom In">+</button>
-            <div className="w-px h-6 bg-zinc-600 mx-1 self-center" />
-            <button onClick={() => centerCanvas((canvasRef.current?.width || 0), (canvasRef.current?.height || 0), 1)} className="px-2 hover:bg-zinc-700 rounded text-sm font-medium transition-colors">Reset</button>
-          </div>
-        )}
+            <h2 className="text-2xl font-bold mb-2 text-zinc-100 group-hover:text-indigo-400 transition-colors">Pixel Editor</h2>
+            <p className="text-zinc-500 mb-6 text-sm">A full-featured pixel art editor with layers, custom palettes, and auto-magic tools.</p>
+            <div className="flex items-center text-indigo-400 font-medium text-sm gap-2">
+              Launch Editor <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
+            </div>
+          </Link>
+
+          {/* Card 2: Converter */}
+          <Link href="/converter" className="group flex-1 bg-zinc-900/80 backdrop-blur-sm border border-zinc-800 hover:border-fuchsia-500/50 p-6 rounded-2xl transition-all duration-300 hover:shadow-2xl hover:shadow-fuchsia-500/10 text-left hover:-translate-y-1">
+            <div className="w-12 h-12 bg-fuchsia-500/20 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform duration-300">
+              <Gamepad2 className="text-fuchsia-400" size={24} />
+            </div>
+            <h2 className="text-2xl font-bold mb-2 text-zinc-100 group-hover:text-fuchsia-400 transition-colors">Sprite Converter</h2>
+            <p className="text-zinc-500 mb-6 text-sm">Upload any high-res image or logo and instantly convert it into a cute 8-bit sprite.</p>
+            <div className="flex items-center text-fuchsia-400 font-medium text-sm gap-2">
+              Launch Converter <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
+            </div>
+          </Link>
+        </div>
+      </div>
+
+      {/* Decorative footer text */}
+      <div className="absolute bottom-6 left-0 w-full text-center text-zinc-700 text-xs font-mono z-10 pointer-events-none">
+        &copy; {new Date().getFullYear()} SpriteLab Suite // High-performance browser tools
       </div>
     </div>
   );

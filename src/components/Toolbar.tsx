@@ -2,9 +2,10 @@
 import { useEditorStore } from "@/store/useEditorStore";
 import { 
   Eraser, Pencil, PaintBucket, Crop, Hand, Undo, Redo, 
-  Grid3X3, ImageDown, Sparkles, Download, ImagePlus
+  Grid3X3, ImageDown, Sparkles, Download, ImagePlus, ArrowLeft
 } from "lucide-react";
 import { useRef } from "react";
+import Link from "next/link";
 
 export function Toolbar({
   onUndo, onRedo, onUpload, onDownload, onAutoProcess, onOutline, onDropShadow
@@ -25,6 +26,12 @@ export function Toolbar({
 
   return (
     <div className="flex flex-wrap items-center gap-3 p-3 bg-zinc-900 border-b border-zinc-800 shadow-md z-10 sticky top-0 text-zinc-100">
+      <Link href="/" className="p-1.5 text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded transition-colors" title="Home">
+        <ArrowLeft size={18} />
+      </Link>
+      
+      <div className="w-px h-6 bg-zinc-700 mx-1" />
+
       <input 
         type="file" 
         ref={fileInputRef} 
